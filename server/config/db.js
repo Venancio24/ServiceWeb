@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 export const connectDB = async () => {
   try {
     await mongoose.connect(
-      'mongodb+srv://venantec2244:LPlTSnUF1gqTI1de@cluster0.31dfsyl.mongodb.net/?retryWrites=true&w=majority',
+      'mongodb+srv://venantec2244:LPlTSnUF1gqTI1de@cluster0.31dfsyl.mongodb.net/db-laundry-system?retryWrites=true&w=majority',
       {
         useNewUrlParser: true,
         useUnifiedTopology: true,
