@@ -1,14 +1,14 @@
-import express from 'express';
-import Cupones from '../models/cupones.js';
-import Promociones from '../models/promociones.js';
-import moment from 'moment';
+import express from "express";
+import Cupones from "../models/cupones.js";
+import Promociones from "../models/promociones.js";
+import moment from "moment";
 
 const router = express.Router();
 
 // Función para generar un código aleatorio de letras y números
 function generateRandomCode(length) {
-  const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let code = '';
+  const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  let code = "";
   for (let i = 0; i < length; i++) {
     const randomIndex = Math.floor(Math.random() * characters.length);
     code += characters.charAt(randomIndex);
@@ -16,7 +16,7 @@ function generateRandomCode(length) {
   return code;
 }
 
-router.get('/generate-codigo-cupon', async (req, res) => {
+router.get("/generate-codigo-cupon", async (req, res) => {
   try {
     let codigoCupon;
     let cuponRepetido;
@@ -31,12 +31,12 @@ router.get('/generate-codigo-cupon', async (req, res) => {
 
     res.status(200).json(codigoCupon);
   } catch (error) {
-    console.error('Error al generar el código de cupón:', error);
-    res.status(500).json({ mensaje: 'Error al generar el código de cupón' });
+    console.error("Error al generar el código de cupón:", error);
+    res.status(500).json({ mensaje: "Error al generar el código de cupón" });
   }
 });
 
-router.post('/generar-cupon', async (req, res) => {
+router.post("/generar-cupon", async (req, res) => {
   try {
     const codigoPromocion = req.body.codigoPromocion;
     const codigoCupon = req.body.codigoCupon;
@@ -46,25 +46,27 @@ router.post('/generar-cupon', async (req, res) => {
       codigoCupon,
       estado: true, // Por defecto, el estado es true
       dateCreation: {
-        fecha: moment().format('YYYY-MM-DD'),
-        hora: moment().format('HH:mm'),
+        fecha: moment().format("YYYY-MM-DD"),
+        hora: moment().format("HH:mm"),
       },
       dateUse: {
-        fecha: '',
-        hora: '',
+        fecha: "",
+        hora: "",
       },
     });
 
     await nuevoCupon.save();
 
-    res.status(201).json({ mensaje: 'Cupón generado exitosamente', cupon: nuevoCupon });
+    res
+      .status(201)
+      .json({ mensaje: "Cupón generado exitosamente", cupon: nuevoCupon });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ mensaje: 'Error al generar cupón' });
+    res.status(500).json({ mensaje: "Error al generar cupón" });
   }
 });
 
-router.get('/validar-cupon/:codigoCupon', async (req, res) => {
+router.get("/validar-cupon/:codigoCupon", async (req, res) => {
   try {
     const codigoCupon = req.params.codigoCupon;
 
@@ -72,7 +74,9 @@ router.get('/validar-cupon/:codigoCupon', async (req, res) => {
     const cupon = await Cupones.findOne({ codigoCupon });
 
     if (!cupon) {
-      return res.status(200).json({ validacion: false, respuesta: 'Cupón inexistente' });
+      return res
+        .status(200)
+        .json({ validacion: false, respuesta: "Cupón inexistente" });
     }
 
     if (cupon.estado === false) {
@@ -85,10 +89,14 @@ router.get('/validar-cupon/:codigoCupon', async (req, res) => {
     }
 
     if (cupon.estado === true) {
-      const promocion = await Promociones.findOne({ codigo: cupon.codigoPromocion });
+      const promocion = await Promociones.findOne({
+        codigo: cupon.codigoPromocion,
+      });
 
       if (!promocion) {
-        return res.status(200).json({ validacion: false, respuesta: 'Promoción no encontrada' });
+        return res
+          .status(200)
+          .json({ validacion: false, respuesta: "Promoción no encontrada" });
       } else {
         // Obtén la fecha actual con Moment.js
         const fechaActual = moment();
@@ -97,22 +105,27 @@ router.get('/validar-cupon/:codigoCupon', async (req, res) => {
         const fechaCreacionCupon = moment(cupon.dateCreation.fecha);
 
         // Suma los días de vigencia de la promoción a la fecha de creación del cupón
-        const fechaExpiracion = fechaCreacionCupon.clone().add(promocion.vigencia, 'days');
+        const fechaExpiracion = fechaCreacionCupon
+          .clone()
+          .add(promocion.vigencia, "days");
 
         // Compara la fecha de expiración con la fecha actual
         if (fechaActual.isSameOrAfter(fechaExpiracion)) {
           return res.status(200).json({
             validacion: false,
-            respuesta: `Cupón caducó - la fecha de expiración fue el ${fechaExpiracion.format('YYYY-MM-DD')}`,
+            respuesta: `Cupón caducó - la fecha de expiración fue el ${fechaExpiracion.format(
+              "YYYY-MM-DD"
+            )}`,
           });
         }
 
         return res.status(200).json({
           validacion: true,
-          respuesta: 'Cupón disponible',
+          respuesta: "Cupón disponible",
           promocion: {
             codigo: promocion.codigo,
             prenda: promocion.prenda,
+            alcance: promocion.alcance,
             cantidadMin: promocion.cantidadMin,
             tipoPromocion: promocion.tipoPromocion,
             tipoDescuento: promocion.tipoDescuento,
@@ -124,11 +137,13 @@ router.get('/validar-cupon/:codigoCupon', async (req, res) => {
     }
   } catch (error) {
     console.error(error);
-    res.status(500).json({ validacion: false, res: 'Error al validar el cupón' });
+    res
+      .status(500)
+      .json({ validacion: false, res: "Error al validar el cupón" });
   }
 });
 
-router.get('/use-cupon/:codigoCupon', async (req, res) => {
+router.get("/use-cupon/:codigoCupon", async (req, res) => {
   try {
     const codigoCupon = req.params.codigoCupon;
     // Buscar el cupón por su código
@@ -138,38 +153,43 @@ router.get('/use-cupon/:codigoCupon', async (req, res) => {
     cupon.estado = false;
 
     // Registrar la fecha y hora actual en el campo dateUse
-    cupon.dateUse.fecha = moment().format('YYYY-MM-DD');
-    cupon.dateUse.hora = moment().format('HH:mm');
+    cupon.dateUse.fecha = moment().format("YYYY-MM-DD");
+    cupon.dateUse.hora = moment().format("HH:mm");
 
     // Guardar los cambios en la base de datos
     await cupon.save();
 
-    return res.json('Cupón utilizado exitosamente');
+    return res.json("Cupón utilizado exitosamente");
   } catch (error) {
     console.error(error);
-    res.status(500).json({ validacion: false, res: 'Error no se pudiedo actualizar el cupón' });
+    res
+      .status(500)
+      .json({
+        validacion: false,
+        res: "Error no se pudiedo actualizar el cupón",
+      });
   }
 });
 
 // Ruta para obtener información de un cupón y su promoción según el código de cupón proporcionado
-router.get('/get-info-promo/:codigoCupon', async (req, res) => {
+router.get("/get-info-promo/:codigoCupon", async (req, res) => {
   const codigoCupon = req.params.codigoCupon;
-
-  console.log(codigoCupon);
 
   try {
     // Busca el cupón por su código
     const cupon = await Cupones.findOne({ codigoCupon }).exec();
 
     if (!cupon) {
-      return res.status(404).json({ error: 'Cupón no encontrado' });
+      return res.status(404).json({ error: "Cupón no encontrado" });
     }
 
     // Busca la promoción relacionada por el código de promoción en el cupón
-    const promocion = await Promociones.findOne({ codigo: cupon.codigoPromocion }).exec();
+    const promocion = await Promociones.findOne({
+      codigo: cupon.codigoPromocion,
+    }).exec();
 
     if (!promocion) {
-      return res.status(404).json({ error: 'Promoción no encontrada' });
+      return res.status(404).json({ error: "Promoción no encontrada" });
     }
 
     // Combina la información del cupón y la promoción en un objeto
@@ -177,6 +197,7 @@ router.get('/get-info-promo/:codigoCupon', async (req, res) => {
       codigoPromocion: cupon.codigoPromocion,
       codigoCupon: cupon.codigoCupon,
       prenda: promocion.prenda,
+      alcance: promocion.alcance,
       descripcion: promocion.descripcion,
       descuento: promocion.descuento,
       dateCreation: cupon.dateCreation,
@@ -187,7 +208,7 @@ router.get('/get-info-promo/:codigoCupon', async (req, res) => {
     res.json(infoCupon);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Error al obtener los datos' });
+    res.status(500).json({ error: "Error al obtener los datos" });
   }
 });
 

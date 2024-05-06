@@ -2,10 +2,11 @@ import mongoose from 'mongoose';
 
 const anularSchema = new mongoose.Schema(
   {
-    _id: String, // Campo personalizado para el ID
+    _id: String, // ID de la Orden
     motivo: String,
     fecha: String,
     hora: String,
+    idUser: String,
   },
   { collection: 'Anulados' }
 );

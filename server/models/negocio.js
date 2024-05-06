@@ -1,25 +1,36 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const NegocioSchema = new mongoose.Schema(
   {
     name: String,
     direccion: String,
-    numero: {
-      info: String,
-      state: Boolean,
-    },
-    estado: Boolean,
-    horario: {
-      dias: [],
+    contacto: [
+      {
+        numero: String,
+        index: Number,
+      },
+    ],
+    itemsAtajos: Array,
+    itemsInformeDiario: Array,
+    rolQAnulan: Array,
+    funcionamiento: {
       horas: {
         inicio: String,
         fin: String,
       },
+      actividad: Boolean,
     },
+    horario: [
+      {
+        horario: String,
+        index: Number,
+      },
+    ],
+    oldOrder: Boolean,
   },
-  { collection: 'Negocio' }
+  { collection: "Negocio" }
 );
 
-const Negocio = mongoose.model('Negocio', NegocioSchema);
+const Negocio = mongoose.model("Negocio", NegocioSchema);
 
 export default Negocio;

@@ -1,16 +1,28 @@
-import express from 'express';
-import Factura from '../models/Factura.js';
-import { openingHours } from '../middleware/middleware.js';
-import codFactura from '../models/codigoFactura.js';
-import Delivery from '../models/delivery.js';
-import clientes from '../models/clientes.js';
-import Cupones from '../models/cupones.js';
-import db from '../config/db.js';
-import moment from 'moment';
-import Almacen from '../models/almacen.js';
-import Anular from '../models/anular.js';
-import Donacion from '../models/donacion.js';
-import { reportePrendas } from '../utils/varsGlobal.js';
+import express from "express";
+import Factura from "../models/Factura.js";
+import { openingHours } from "../middleware/middleware.js";
+import codFactura from "../models/codigoFactura.js";
+import clientes from "../models/clientes.js";
+import Cupones from "../models/cupones.js";
+import Negocio from "../models/negocio.js";
+import db from "../config/db.js";
+import moment from "moment";
+import Almacen from "../models/almacen.js";
+import Anular from "../models/anular.js";
+import Donacion from "../models/donacion.js";
+
+import Servicio from "../models/portafolio/servicios.js";
+import Producto from "../models/portafolio/productos.js";
+
+import Pagos from "../models/pagos.js";
+
+import {
+  GetPagosId,
+  GetPagosIdOrden,
+  handleGetInfoDelivery,
+} from "../utils/utilsFuncion.js";
+import { handleAddPago } from "./pagos.js";
+import { handleAddGasto } from "./gastos.js";
 
 const router = express.Router();
 
@@ -21,6 +33,7 @@ const createPuntosObj = (res, points) => {
     _id: idOrdenService,
     dni: dni,
     Nombre: nombre,
+    direccion,
     celular: phone,
   } = res;
 
@@ -32,6 +45,7 @@ const createPuntosObj = (res, points) => {
     $set: {
       nombre,
       phone,
+      direccion,
     },
     $push: {
       infoScore: {
@@ -49,23 +63,24 @@ const createPuntosObj = (res, points) => {
   return { filter, update };
 };
 
-router.post('/add-factura', openingHours, async (req, res) => {
+router.post("/add-factura", openingHours, async (req, res) => {
   const session = await db.startSession();
   session.startTransaction(); // Comienza una transacción
+
   try {
-    const { infoRecibo } = req.body;
+    const { infoOrden, infoPago } = req.body;
     const {
       codRecibo,
       dateRecepcion,
       Modalidad,
       Nombre,
-      Producto,
+      Items,
       celular,
-      Pago,
-      ListPago,
+      direccion,
+      // Pago,
+      // ListPago,
       datePrevista,
       dateEntrega,
-      metodoPago,
       descuento,
       estadoPrenda,
       estado,
@@ -80,7 +95,7 @@ router.post('/add-factura', openingHours, async (req, res) => {
       attendedBy,
       lastEdit,
       typeRegistro,
-    } = infoRecibo;
+    } = infoOrden;
 
     // Consultar el último registro ordenado por el campo 'index' de forma descendente
     const ultimoRegistro = await Factura.findOne().sort({ index: -1 }).exec();
@@ -92,9 +107,13 @@ router.post('/add-factura', openingHours, async (req, res) => {
     const nuevoIndice = ultimoIndice + 1;
 
     let updatedCod;
-    if (modeRegistro === 'nuevo') {
+    if (modeRegistro === "nuevo") {
       // Tu lógica para actualizar el código de factura
-      updatedCod = await codFactura.findOneAndUpdate({}, { $inc: { codActual: 1 } }, { new: true, session: session });
+      updatedCod = await codFactura.findOneAndUpdate(
+        {},
+        { $inc: { codActual: 1 } },
+        { new: true, session: session }
+      );
 
       if (updatedCod) {
         if (updatedCod.codActual > updatedCod.codFinal) {
@@ -102,23 +121,31 @@ router.post('/add-factura', openingHours, async (req, res) => {
           await updatedCod.save({ session: session });
         }
       } else {
-        return res.status(404).json({ mensaje: 'Código de factura no encontrado' });
+        return res
+          .status(404)
+          .json({ mensaje: "Código de factura no encontrado" });
       }
     }
 
+    const dateCreation = {
+      fecha: moment().format("YYYY-MM-DD"),
+      hora: moment().format("HH:mm"),
+    };
+
     // Crear el nuevo registro con el índice asignado
     const nuevoDato = new Factura({
+      dateCreation,
       codRecibo,
       dateRecepcion,
       Modalidad,
       Nombre,
-      Producto,
+      Items,
       celular,
-      Pago,
-      ListPago,
+      direccion,
+      // Pago,
+      // ListPago,
       datePrevista,
       dateEntrega,
-      metodoPago,
       descuento,
       estadoPrenda,
       estado,
@@ -140,23 +167,30 @@ router.post('/add-factura', openingHours, async (req, res) => {
 
     // Guardar el nuevo registro en la base de datos
     const fSaved = await nuevoDato.save({ session: session });
-    const facturaGuardada = fSaved.toObject();
+    let facturaGuardada = fSaved.toObject();
 
-    let newDelivery;
-    if (Modalidad === 'Delivery' && modeRegistro === 'nuevo') {
-      const { infoDelivery } = req.body;
-      const { name, descripcion, fecha, hora, monto } = infoDelivery;
+    const lPagos = [];
+    if (infoPago.length > 0) {
+      // Utilizamos Promise.all para ejecutar las operaciones asíncronas en paralelo
+      await Promise.all(
+        infoPago.map(async (pago) => {
+          const newIPago = await handleAddPago({
+            ...pago,
+            idOrden: facturaGuardada._id,
+          });
 
-      newDelivery = new Delivery({
-        idCliente: facturaGuardada._id,
-        name,
-        descripcion,
-        fecha,
-        hora,
-        monto,
-      });
+          lPagos.push(newIPago);
+        })
+      );
+    }
 
-      await newDelivery.save({ session: session });
+    let iGasto;
+    // Verificar si la modalidad es "Delivery"
+    if (infoOrden.Modalidad === "Delivery") {
+      const { infoGastoByDelivery } = req.body;
+      if (Object.keys(infoGastoByDelivery).length) {
+        iGasto = await handleAddGasto(infoGastoByDelivery);
+      }
     }
 
     if (facturaGuardada.gift_promo.length > 0) {
@@ -170,12 +204,12 @@ router.post('/add-factura', openingHours, async (req, res) => {
           codigoCupon,
           estado: true, // Por defecto, el estado es true
           dateCreation: {
-            fecha: moment().format('YYYY-MM-DD'),
-            hora: moment().format('HH:mm'),
+            fecha: moment().format("YYYY-MM-DD"),
+            hora: moment().format("HH:mm"),
           },
           dateUse: {
-            fecha: '',
-            hora: '',
+            fecha: "",
+            hora: "",
           },
         });
 
@@ -184,25 +218,38 @@ router.post('/add-factura', openingHours, async (req, res) => {
     }
 
     const beneficios = facturaGuardada.cargosExtras.beneficios;
-    if (facturaGuardada.modoDescuento === 'Puntos' && beneficios.puntos > 0 && facturaGuardada.dni !== '') {
+    if (
+      facturaGuardada.modoDescuento === "Puntos" &&
+      beneficios.puntos > 0 &&
+      facturaGuardada.dni !== ""
+    ) {
       // Si la orden esta siendo usado en el cliente osea registrado
       const ordenUsada = await clientes.findOne({
         dni: facturaGuardada.dni,
-        'infoScore.idOrdenService': facturaGuardada._id,
+        "infoScore.idOrdenService": facturaGuardada._id,
       });
 
       // si no a sido registrado  pues aplicar puntos
       if (!ordenUsada) {
         // si uso puntos es que hay cliente
-        const puntosToDeduct = createPuntosObj(facturaGuardada, -beneficios.puntos); // reducir puntos al cliente
+        const puntosToDeduct = createPuntosObj(
+          facturaGuardada,
+          -beneficios.puntos
+        ); // reducir puntos al cliente
 
         const { filter, update } = puntosToDeduct;
 
-        await clientes.updateOne(filter, update, { upsert: true, session: session });
+        await clientes.updateOne(filter, update, {
+          upsert: true,
+          session: session,
+        });
       }
     }
 
-    if (facturaGuardada.modoDescuento === 'Promocion' && beneficios.promociones.length > 0) {
+    if (
+      facturaGuardada.modoDescuento === "Promocion" &&
+      beneficios.promociones.length > 0
+    ) {
       for (const cup of beneficios.promociones) {
         const codigoCupon = cup.codigoCupon;
 
@@ -213,113 +260,228 @@ router.post('/add-factura', openingHours, async (req, res) => {
         cupon.estado = false;
 
         // Registrar la fecha y hora actual en el campo dateUse
-        cupon.dateUse.fecha = moment().format('YYYY-MM-DD');
-        cupon.dateUse.hora = moment().format('HH:mm');
+        cupon.dateUse.fecha = moment().format("YYYY-MM-DD");
+        cupon.dateUse.hora = moment().format("HH:mm");
 
         // Guardar los cambios en la base de datos
         await cupon.save({ session: session });
       }
     }
 
+    await session.commitTransaction();
+
+    const facturaId = facturaGuardada._id.toString();
+    const infoPagos = await GetPagosIdOrden(facturaId);
+
+    const finalLPagos = [];
+    if (lPagos.length > 0) {
+      await Promise.all(
+        lPagos.map(async (pago) => {
+          const newInfoPago = await GetPagosId(pago._id.toString());
+          finalLPagos.push(newInfoPago);
+        })
+      );
+    }
+
     res.json({
       newOrder: {
         ...facturaGuardada,
+        ListPago: infoPagos,
         donationDate: {
-          fecha: '',
-          hora: '',
+          fecha: "",
+          hora: "",
         },
       },
-      ...(Modalidad === 'Delivery' && modeRegistro === 'nuevo' && { newDelivery }),
-      ...(modeRegistro === 'nuevo' && { newCodigo: updatedCod.codActual }),
+      ...(finalLPagos.length > 0 && { listNewsPagos: finalLPagos }),
+      ...(iGasto && { newGasto: iGasto }),
+      ...(modeRegistro === "nuevo" && { newCodigo: updatedCod.codActual }),
     });
-    await session.commitTransaction();
   } catch (error) {
     await session.abortTransaction();
-    console.error('Error al guardar los datos:', error);
-    res.status(500).json({ mensaje: 'Error al guardar los datos' });
+    console.error("Error al guardar los datos:", error);
+    res.status(500).json({ mensaje: "Error al guardar los datos" });
   }
 });
 
-router.get('/get-factura', (req, res) => {
+router.get("/get-factura", (req, res) => {
   Factura.find()
     .then((facturas) => {
       res.json(facturas);
     })
     .catch((error) => {
-      console.error('Error al obtener los datos:', error);
-      res.status(500).json({ mensaje: 'Error al obtener los datos' });
+      console.error("Error al obtener los datos:", error);
+      res.status(500).json({ mensaje: "Error al obtener los datos" });
     });
 });
 
-router.get('/get-factura/:id', (req, res) => {
+router.get("/get-factura/:id", (req, res) => {
   const { id } = req.params; // Obteniendo el id desde los parámetros de la URL
   Factura.findById(id)
     .then((factura) => {
       if (factura) {
         res.json(factura);
       } else {
-        res.status(404).json({ mensaje: 'Factura no encontrada' });
+        res.status(404).json({ mensaje: "Factura no encontrada" });
       }
     })
     .catch((error) => {
-      console.error('Error al obtener los datos:', error);
-      res.status(500).json({ mensaje: 'Error al obtener los datos' });
+      console.error("Error al obtener los datos:", error);
+      res.status(500).json({ mensaje: "Error al obtener los datos" });
     });
 });
 
-router.get('/get-factura/date/:datePago', (req, res) => {
+router.get("/get-factura/date/:datePago", async (req, res) => {
   const { datePago } = req.params;
 
-  Factura.find({ 'ListPago.date.fecha': datePago })
-    .then((facturas) => {
-      // Filtrar y mapear los resultados para incluir sólo los documentos que coincidan en la fecha de pago.
-      const facturasConPagoCorrespondiente = facturas.filter((factura) =>
-        factura.ListPago.some((pago) => pago.date.fecha === datePago)
-      );
-
-      res.json(facturasConPagoCorrespondiente);
-    })
-    .catch((error) => {
-      console.error('Error al obtener los datos:', error);
-      res.status(500).json({ mensaje: 'Error al obtener los datos' });
+  try {
+    // Paso 1: Obtener todos los pagos para una fecha específica
+    const infoPagos = await Pagos.find({
+      "date.fecha": datePago,
     });
+
+    // Paso 2: Agrupar los pagos por idOrden
+    const pagosAgrupados = infoPagos.reduce((acc, pago) => {
+      if (!acc[pago.idOrden]) {
+        acc[pago.idOrden] = [];
+      }
+      acc[pago.idOrden].push(pago);
+      return acc;
+    }, {});
+
+    // Paso 3: Para cada grupo de idOrden, buscar la información de la factura correspondiente
+    const estructuraCombinada = [];
+    for (const idOrden of Object.keys(pagosAgrupados)) {
+      const pagosGrupo = pagosAgrupados[idOrden];
+      const factura = await Factura.findOne({ _id: idOrden }).lean();
+      if (factura) {
+        estructuraCombinada.push({ ...factura, ListPago: pagosGrupo });
+      }
+    }
+
+    res.json(estructuraCombinada);
+  } catch (error) {
+    console.error(error);
+    res.status(500).send("Error en el servidor: " + error.message);
+  }
 });
 
-router.get('/get-factura/date/:startDate/:endDate', async (req, res) => {
+router.get("/get-factura/date/:startDate/:endDate", async (req, res) => {
   const { startDate, endDate } = req.params;
 
   try {
-    // Obtén todas las facturas en el rango de fechas
-    const facturas = await Factura.find({
-      'dateRecepcion.fecha': {
-        $gte: startDate,
-        $lte: endDate,
+    // Utiliza aggregate para unir las colecciones Factura y Pagos
+    const ordenes = await Factura.aggregate([
+      {
+        $match: {
+          "dateRecepcion.fecha": {
+            $gte: startDate,
+            $lte: endDate,
+          },
+        },
       },
-    });
+      {
+        $lookup: {
+          from: "pagos", // Nombre de la colección de pagos
+          localField: "_id", // Campo de la factura que se usará para la unión
+          foreignField: "idOrden", // Campo en la colección de pagos que se relaciona con la factura
+          as: "ListPago", // Nombre del campo donde se almacenarán los pagos relacionados
+        },
+      },
+      {
+        $addFields: {
+          ListPagoIds: { $toString: "$_id" }, // Convertir el _id de la factura a cadena
+        },
+      },
+      {
+        $lookup: {
+          from: "pagos", // Nombre de la colección de pagos
+          localField: "ListPagoIds", // Campo de la factura convertido a cadena
+          foreignField: "idOrden", // Campo en la colección de pagos que se relaciona con la factura
+          as: "ListPago", // Nombre del campo donde se almacenarán los pagos relacionados
+        },
+      },
+      {
+        $unset: "ListPagoIds", // Eliminar el campo temporal ListPagoIds después de la unión
+      },
+      {
+        $addFields: {
+          ListPago: {
+            $map: {
+              input: "$ListPago", // Itera sobre los pagos relacionados
+              as: "pago", // Alias para cada pago
+              in: {
+                // Agrega los campos específicos del pago
+                _id: "$$pago._id",
+                idUser: "$$pago.idUser",
+                idOrden: "$$pago.idOrden",
+                orden: "$codRecibo",
+                date: "$$pago.date",
+                nombre: "$Nombre",
+                total: "$$pago.total",
+                metodoPago: "$$pago.metodoPago",
+                Modalidad: "$Modalidad",
+              },
+            },
+          },
+        },
+      },
+      {
+        $project: {
+          // Proyecta los campos de las facturas junto con el campo ListPago creado
+          dateCreation: 1,
+          codRecibo: 1,
+          dateRecepcion: 1,
+          Modalidad: 1,
+          Nombre: 1,
+          Items: 1,
+          celular: 1,
+          direccion: 1,
+          datePrevista: 1,
+          dateEntrega: 1,
+          descuento: 1,
+          estadoPrenda: 1,
+          estado: 1,
+          index: 1,
+          dni: 1,
+          subTotal: 1,
+          totalNeto: 1,
+          cargosExtras: 1,
+          factura: 1,
+          modeRegistro: 1,
+          notas: 1,
+          modoDescuento: 1,
+          gift_promo: 1,
+          location: 1,
+          attendedBy: 1,
+          lastEdit: 1,
+          typeRegistro: 1,
+          ListPago: 1,
+        },
+      },
+    ]);
 
-    // Array para almacenar los resultados finales
     const resultados = [];
     const donacionRegistros = await Donacion.find();
-    // Itera a través de las facturas
-    for (const factura of facturas) {
+
+    for (const orden of ordenes) {
       // Verifica condiciones para buscar en Donacion
-      if (factura.location === 3 && factura.estadoPrenda === 'donado') {
+      if (orden.location === 3 && orden.estadoPrenda === "donado") {
         // Busca en la colección Donacion
         let donationDate;
         // Itera a través de los registros de Almacen
         for (const donated of donacionRegistros) {
           // Itera a través de los serviceOrder del registro de Almacen
           for (const serviceOrderId of donated.serviceOrder) {
-            if (serviceOrderId === factura._id.toString()) {
-              // Encuentra la factura correspondiente a serviceOrderId
+            if (serviceOrderId === orden._id.toString()) {
+              // Encuentra la orden correspondiente a serviceOrderId
               donationDate = donated.donationDate;
-              break; // Si se encontró la factura, puedes salir del bucle
+              break; // Si se encontró la orden, puedes salir del bucle
             }
           }
 
           if (donationDate) {
             resultados.push({
-              ...factura.toObject(),
+              ...orden,
               donationDate,
             });
             break;
@@ -328,10 +490,10 @@ router.get('/get-factura/date/:startDate/:endDate', async (req, res) => {
       } else {
         // Si no cumple con las condiciones, agrega la factura con donationDate vacío
         resultados.push({
-          ...factura.toObject(),
+          ...orden,
           donationDate: {
-            fecha: '',
-            hora: '',
+            fecha: "",
+            hora: "",
           },
         });
       }
@@ -339,73 +501,158 @@ router.get('/get-factura/date/:startDate/:endDate', async (req, res) => {
 
     res.status(200).json(resultados);
   } catch (error) {
-    console.error('Error al obtener datos: ', error);
-    res.status(500).json({ mensaje: 'Error interno del servidor' });
+    console.error("Error al obtener datos: ", error);
+    res.status(500).json({ mensaje: "Error interno del servidor" });
   }
 });
 
 const generateDateArray = (type, filter) => {
   let fechas = [];
 
-  if (type === 'daily') {
+  if (type === "daily") {
     const { days } = filter;
     // Generar fechas para los próximos 3 días
     fechas = Array.from({ length: days }, (_, index) =>
-      moment().startOf('day').add(index, 'days').format('YYYY-MM-DD')
+      moment().startOf("day").add(index, "days").format("YYYY-MM-DD")
     );
     return fechas;
   } else {
-    if (type === 'monthly') {
+    if (type === "monthly") {
       const { date } = filter;
       // Generar fechas para todo el mes
-      const firstDayOfMonth = moment(date).startOf('month');
-      const lastDayOfMonth = moment(date).endOf('month');
+      const firstDayOfMonth = moment(date).startOf("month");
+      const lastDayOfMonth = moment(date).endOf("month");
 
       let currentDate = moment(firstDayOfMonth);
       while (currentDate <= lastDayOfMonth) {
-        fechas.push(currentDate.format('YYYY-MM-DD'));
-        currentDate.add(1, 'day');
+        fechas.push(currentDate.format("YYYY-MM-DD"));
+        currentDate.add(1, "day");
       }
       return fechas;
     }
   }
 };
 
-router.post('/get-report/date-prevista/:type', async (req, res) => {
+router.post("/get-report/date-prevista/:type", async (req, res) => {
   try {
     const { type } = req.params;
     const filter = req.body;
     const datesArray = generateDateArray(type, filter);
     const infoReporte = [];
 
+    const infoNegocio = await Negocio.findOne();
+    const itemsReporte = infoNegocio.itemsInformeDiario;
+
+    const infoDelivery = await handleGetInfoDelivery();
+
+    itemsReporte.push({
+      order: itemsReporte.length,
+      id: `SER${infoDelivery._id.toString()}`,
+    });
+
+    const splitItem = itemsReporte.map((items) => {
+      return {
+        ID: items.id.substring(3),
+        TIPO: items.id.substring(0, 3),
+      };
+    });
+
+    let groupedResults = [];
+
+    // Recorremos cada elemento de splitItem
+    for (const item of splitItem) {
+      try {
+        let resultObject = {};
+        resultObject.idColumna = item.ID;
+
+        // Si los primeros caracteres son "CAT", busca en la colección categorias
+        if (item.TIPO === "CAT") {
+          const servicios = await Servicio.find(
+            { idCategoria: item.ID },
+            "_id"
+          );
+          const productos = await Producto.find(
+            { idCategoria: item.ID },
+            "_id"
+          );
+
+          const idsServicios = servicios.map((servicio) =>
+            servicio._id.toString()
+          );
+          const idsProductos = productos.map((producto) =>
+            producto._id.toString()
+          );
+
+          // Combinamos los IDs de servicios y productos
+          resultObject.idsCantidades = [...idsServicios, ...idsProductos];
+        } else {
+          // Si no es "CAT", simplemente agregamos el ID al array
+          resultObject.idsCantidades = [item.ID];
+        }
+
+        // Agregamos el objeto al array de resultados
+        groupedResults.push(resultObject);
+      } catch (error) {
+        console.error("Error al buscar el documento:", error);
+      }
+    }
+
     for (const datePrevista of datesArray) {
       const facturas = await Factura.find({
-        'datePrevista.fecha': datePrevista,
-        estadoPrenda: { $nin: ['anulado', 'donado'] },
+        "datePrevista.fecha": datePrevista,
+        estadoPrenda: { $nin: ["anulado", "donado"] },
       });
 
       const resultado = {
         FechaPrevista: datePrevista,
         CantidadPedido: facturas.length,
-        InfoProducto: facturas.reduce((productos, factura) => {
-          factura.Producto.forEach(({ producto, cantidad }) => {
-            if (reportePrendas.includes(producto)) {
-              productos[producto] = (productos[producto] || 0) + Number(cantidad);
-            }
-          });
-          return productos;
-        }, {}),
+        InfoItems: {},
       };
 
-      resultado.InfoProducto = Object.entries(resultado.InfoProducto).map(([Producto, Cantidad]) => ({
-        Producto,
-        Cantidad,
-      }));
+      // Utiliza Promise.all para esperar a que se completen todas las operaciones asíncronas antes de continuar
+      await Promise.all(
+        facturas.map(async (factura) => {
+          // Recorremos cada factura
+          await Promise.all(
+            factura.Items.map(async (order) => {
+              // Recorremos cada item de la factura
 
-      // Asegurarse de que todos los productos deseados estén representados
-      reportePrendas.forEach((producto) => {
-        if (!resultado.InfoProducto.some((p) => p.Producto === producto)) {
-          resultado.InfoProducto.push({ Producto: producto, Cantidad: 0 });
+              for (const item of groupedResults) {
+                // Verificamos si el identificador está en los idsCantidades de cada grupo
+                if (item.idsCantidades.includes(order.identificador)) {
+                  // Verificar si resultado.InfoItems[item.idColumna] es un número
+                  const existingValue =
+                    parseFloat(resultado.InfoItems[item.idColumna]) || 0;
+                  // Sumar el valor existente con la cantidad de la orden y formatearlo a 2 decimales
+                  resultado.InfoItems[item.idColumna] = (
+                    existingValue + Number(order.cantidad)
+                  ).toFixed(2);
+                }
+              }
+            })
+          );
+        })
+      );
+
+      resultado.InfoItems = Object.entries(resultado.InfoItems).map(
+        ([identificador, Cantidad]) => ({
+          identificador,
+          Cantidad,
+        })
+      );
+
+      groupedResults.forEach((group) => {
+        // Verifica si la idColumna ya existe en resultado.InfoItems
+        const existingItem = resultado.InfoItems.find(
+          (item) => item.identificador === group.idColumna
+        );
+
+        if (!existingItem) {
+          // Si la idColumna no existe, agrega una nueva entrada con cantidad 0
+          resultado.InfoItems.push({
+            identificador: group.idColumna,
+            Cantidad: 0,
+          });
         }
       });
 
@@ -414,23 +661,23 @@ router.post('/get-report/date-prevista/:type', async (req, res) => {
 
     res.json(infoReporte);
   } catch (error) {
-    console.error('Error al obtener los datos:', error);
-    res.status(500).json({ mensaje: 'Error al obtener los datos' });
+    console.error("Error al obtener los datos:", error);
+    res.status(500).json({ mensaje: "Error al obtener los datos" });
   }
 });
 
-router.put('/update-factura/:id', openingHours, async (req, res) => {
+router.put("/update-factura/:id", openingHours, async (req, res) => {
   const session = await db.startSession();
   session.startTransaction(); // Comienza una transacción
 
   try {
     const facturaId = req.params.id;
-    const { infoRecibo } = req.body;
+    const { infoOrden } = req.body;
 
     Factura.findById(facturaId)
       .then((factura) => {
         if (!factura) {
-          return res.status(404).json({ mensaje: 'Factura no encontrada' });
+          return res.status(404).json({ mensaje: "Factura no encontrada" });
         }
 
         const orderInicial = factura;
@@ -440,21 +687,53 @@ router.put('/update-factura/:id', openingHours, async (req, res) => {
 
         // Itera a través de los campos existentes en la factura y actualiza si se proporcionan en req.body
         for (const field in orderInicial.toObject()) {
-          if (infoRecibo.hasOwnProperty(field)) {
-            orderToUpdate[field] = infoRecibo[field];
+          if (infoOrden.hasOwnProperty(field)) {
+            orderToUpdate[field] = infoOrden[field];
           } else {
-            orderToUpdate[field] = infoRecibo[field];
+            orderToUpdate[field] = infoOrden[field];
           }
         }
 
         // Actualiza los campos en la base de datos
-        Factura.findOneAndUpdate({ _id: facturaId }, { $set: orderToUpdate }, { new: true, session: session })
+        Factura.findOneAndUpdate(
+          { _id: facturaId },
+          { $set: orderToUpdate },
+          { new: true, session: session }
+        )
           .then(async (uOrder) => {
             const orderUpdated = uOrder.toObject();
-            let updateDelivery;
+
+            const lPagos = [];
+            if (orderInicial.estado === "reservado") {
+              const { infoPago } = req.body;
+              if (infoPago.length > 0) {
+                await Promise.all(
+                  infoPago.map(async (pago) => {
+                    const newIPago = await handleAddPago({
+                      ...pago,
+                      idOrden: orderInicial._id,
+                    });
+
+                    lPagos.push(newIPago);
+                  })
+                );
+              }
+            }
+
+            let iGasto;
+            // Verificar si la modalidad es "Delivery" y "Entrgado"
+            if (
+              orderUpdated.Modalidad === "Delivery" &&
+              orderUpdated.estadoPrenda === "entregado"
+            ) {
+              const { infoGastoByDelivery } = req.body;
+              if (Object.keys(infoGastoByDelivery).length) {
+                iGasto = await handleAddGasto(infoGastoByDelivery);
+              }
+            }
 
             // let newAnulacion;
-            if (orderUpdated.estadoPrenda === 'anulado') {
+            if (orderUpdated.estadoPrenda === "anulado") {
               const { infoAnulacion } = req.body;
 
               const nuevaAnulacion = new Anular(infoAnulacion);
@@ -468,38 +747,36 @@ router.put('/update-factura/:id', openingHours, async (req, res) => {
                     // una vez anulado - eliminar puntaje de orden de servicio
                     const idOrderEliminada = anulado._id;
 
-                    const cliente = await clientes.findOne({ dni: orderUpdated.dni });
+                    const cliente = await clientes.findOne({
+                      dni: orderUpdated.dni,
+                    });
 
                     if (cliente) {
-                      cliente.infoScore = cliente.infoScore.filter((info) => info.idOrdenService !== idOrderEliminada);
+                      cliente.infoScore = cliente.infoScore.filter(
+                        (info) => info.idOrdenService !== idOrderEliminada
+                      );
 
                       cliente.scoreTotal = cliente.infoScore
-                        .reduce((total, info) => total + parseInt(info.score, 10), 0)
+                        .reduce(
+                          (total, info) => total + parseInt(info.score, 10),
+                          0
+                        )
                         .toString();
                       await cliente.save({ session: session });
                     }
                   }
                 })
                 .catch((error) => {
-                  console.error('Error al anular cliente:', error);
-                  res.status(500).json({ mensaje: 'Error al anular cliente:' });
+                  console.error("Error al anular cliente:", error);
+                  res.status(500).json({ mensaje: "Error al anular cliente:" });
                 });
             }
 
-            if (orderUpdated.estadoPrenda === 'pendiente' && orderUpdated.Modalidad === 'Delivery') {
-              await Delivery.findOneAndUpdate(
-                { idCliente: facturaId },
-                { $set: { name: orderUpdated.Nombre } },
-                { new: true, session: session }
-              )
-                .then((deliveryActualuzado) => {
-                  updateDelivery = deliveryActualuzado.toObject();
-                })
-                .catch((error) => {
-                  console.error('Error al Actualizar Nombre de Delivery:', error);
-                  res.status(500).json({ mensaje: 'Error al Actualizar Nombre de Deliveryy' });
-                });
-
+            if (
+              orderUpdated.estadoPrenda === "pendiente" &&
+              orderUpdated.Modalidad === "Delivery" &&
+              orderToUpdate.modeRegistro !== "antiguo"
+            ) {
               // Asegurar que se Registren las promociones como (cupones)
               if (orderUpdated.gift_promo.length > 0) {
                 const ListPromos = orderUpdated.gift_promo;
@@ -516,12 +793,12 @@ router.put('/update-factura/:id', openingHours, async (req, res) => {
                         codigoCupon,
                         estado: true, // Por defecto, el estado es true
                         dateCreation: {
-                          fecha: moment().format('YYYY-MM-DD'),
-                          hora: moment().format('HH:mm'),
+                          fecha: moment().format("YYYY-MM-DD"),
+                          hora: moment().format("HH:mm"),
                         },
                         dateUse: {
-                          fecha: '',
-                          hora: '',
+                          fecha: "",
+                          hora: "",
                         },
                       });
 
@@ -532,23 +809,36 @@ router.put('/update-factura/:id', openingHours, async (req, res) => {
               }
 
               const beneficios = orderUpdated.cargosExtras.beneficios;
-              if (orderUpdated.modoDescuento === 'Puntos' && beneficios.puntos > 0 && orderUpdated.dni !== '') {
+              if (
+                orderUpdated.modoDescuento === "Puntos" &&
+                beneficios.puntos > 0 &&
+                orderUpdated.dni !== ""
+              ) {
                 // Si la orden esta estan usado en cliento osea registrado
                 const ordenUsada = await clientes.findOne({
                   dni: orderUpdated.dni,
-                  'infoScore.idOrdenService': orderUpdated._id,
+                  "infoScore.idOrdenService": orderUpdated._id,
                 });
 
                 // si no a sido registrado  pues aplicar puntos
                 if (!ordenUsada) {
-                  const puntosToDeduct = createPuntosObj(orderUpdated, -beneficios.puntos); // reducir puntos a erse cliente
+                  const puntosToDeduct = createPuntosObj(
+                    orderUpdated,
+                    -beneficios.puntos
+                  ); // reducir puntos a erse cliente
                   const { filter, update } = puntosToDeduct;
-                  await clientes.updateOne(filter, update, { upsert: true, session: session });
+                  await clientes.updateOne(filter, update, {
+                    upsert: true,
+                    session: session,
+                  });
                 }
               }
 
               // Asegurar que los Cupones se usen
-              if (orderUpdated.modoDescuento === 'Promocion' && beneficios.promociones.length > 0) {
+              if (
+                orderUpdated.modoDescuento === "Promocion" &&
+                beneficios.promociones.length > 0
+              ) {
                 const ListPromos = beneficios.promociones;
                 await Promise.all(
                   ListPromos.map(async (promo) => {
@@ -559,8 +849,8 @@ router.put('/update-factura/:id', openingHours, async (req, res) => {
                       cupon.estado = false;
 
                       // Registrar la fecha y hora actual en el campo dateUse
-                      (cupon.dateUse.fecha = moment().format('YYYY-MM-DD')),
-                        (cupon.dateUse.hora = moment().format('HH:mm')),
+                      (cupon.dateUse.fecha = moment().format("YYYY-MM-DD")),
+                        (cupon.dateUse.hora = moment().format("HH:mm")),
                         // Guardar los cambios en la base de datos
                         await cupon.save({ session: session });
                     }
@@ -570,14 +860,16 @@ router.put('/update-factura/:id', openingHours, async (req, res) => {
             }
 
             if (
-              orderUpdated.Pago === 'Completo' &&
-              orderUpdated.estadoPrenda === 'entregado' &&
-              orderUpdated.dni !== ''
+              orderUpdated.estadoPrenda === "entregado" &&
+              orderUpdated.dni !== ""
             ) {
               const score = parseInt(orderUpdated.totalNeto);
               const puntosObj = createPuntosObj(orderUpdated, score);
               const { filter, update } = puntosObj;
-              await clientes.updateOne(filter, update, { upsert: true, session: session });
+              await clientes.updateOne(filter, update, {
+                upsert: true,
+                session: session,
+              });
             }
 
             if (orderUpdated.location === 1 && orderInicial.location === 2) {
@@ -588,137 +880,140 @@ router.put('/update-factura/:id', openingHours, async (req, res) => {
               );
             }
 
-            let newDelivery;
-            if (
-              orderUpdated.Modalidad === 'Delivery' &&
-              orderInicial.estadoPrenda === 'pendiente' &&
-              orderUpdated.estadoPrenda === 'entregado'
-            ) {
-              const { infoDelivery } = req.body;
-              const { name, descripcion, fecha, hora, monto } = infoDelivery;
+            await session.commitTransaction();
 
-              const nuevoDelivery = new Delivery({
-                idCliente: orderUpdated._id,
-                name,
-                descripcion,
-                fecha,
-                hora,
-                monto,
-              });
+            const infoPagos = await GetPagosIdOrden(
+              orderUpdated._id.toString()
+            );
 
-              await nuevoDelivery
-                .save({ session: session })
-                .then((deliveryGuardado) => {
-                  newDelivery = deliveryGuardado.toObject();
+            const finalLPagos = [];
+            if (lPagos.length > 0) {
+              await Promise.all(
+                lPagos.map(async (pago) => {
+                  const newInfoPago = await GetPagosId(pago._id.toString());
+                  finalLPagos.push(newInfoPago);
                 })
-                .catch((error) => {
-                  console.error('Error al Guardar Delivery:', error);
-                  res.status(500).json({ mensaje: 'Error al Guardar Delivery' });
-                });
+              );
             }
 
             res.json({
               orderUpdated: {
                 ...orderUpdated,
+                ListPago: infoPagos,
                 donationDate: {
-                  fecha: '',
-                  hora: '',
+                  fecha: "",
+                  hora: "",
                 },
               },
-              // ...(orderUpdated.estadoPrenda === 'anulado' && { newAnulacion }),
-              ...(orderUpdated.estadoPrenda === 'pendiente' &&
-                orderUpdated.Modalidad === 'Delivery' && { updateDelivery }),
-              ...(orderUpdated.Modalidad === 'Delivery' &&
-                orderInicial.estadoPrenda === 'pendiente' &&
-                orderUpdated.estadoPrenda === 'entregado' && { newDelivery }),
+              ...(finalLPagos.length > 0 && { listNewsPagos: finalLPagos }),
+              ...(iGasto && { newGasto: iGasto }),
             });
           })
           .catch((error) => {
-            console.error('Error al actualizar la factura:', error);
-            res.status(500).json({ mensaje: 'Error al actualizar la factura' });
+            console.error("Error al actualizar la factura:", error);
+            res.status(500).json({ mensaje: "Error al actualizar la factura" });
           });
       })
       .catch((error) => {
-        console.error('Error Ordern no Encontrada:', error);
-        res.status(500).json({ mensaje: 'Error Ordern no Encontrada' });
+        console.error("Error Ordern no Encontrada:", error);
+        res.status(500).json({ mensaje: "Error Ordern no Encontrada" });
       });
-
-    await session.commitTransaction();
   } catch (error) {
     await session.abortTransaction();
-    console.error('Error al actualizar los datos de la orden:', error);
-    res.status(500).json({ mensaje: 'Error al actualizar los datos de la orden' });
+    console.error("Error al actualizar los datos de la orden:", error);
+    res
+      .status(500)
+      .json({ mensaje: "Error al actualizar los datos de la orden" });
   }
 });
 
-router.post('/cancel-entrega/:id', async (req, res) => {
+router.get("/pagos-prueba/:idOrden", async (req, res) => {
+  try {
+    const idOrden = req.params.idOrden;
+    const infoPagos = await GetPagosIdOrden(idOrden);
+    res.json(infoPagos);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ mensaje: "Error al cancelar Entrega" });
+  }
+});
+
+router.post("/cancel-entrega/:idOrden", async (req, res) => {
   const session = await db.startSession();
   session.startTransaction(); // Comienza una transacción
 
   try {
-    const facturaId = req.params.id;
+    const facturaId = req.params.idOrden;
 
     // Obtener factura por ID
     const factura = await Factura.findById(facturaId);
     if (!factura) {
-      return res.status(404).json({ error: 'Factura no encontrada' });
+      return res.status(404).json({ error: "Factura no encontrada" });
     }
 
-    const fechaActual = moment().format('YYYY-MM-DD');
-    let idDeliveryDeleted;
-    if (factura.estadoPrenda === 'entregado' && factura.dateEntrega.fecha === fechaActual) {
-      if (factura.Modalidad === 'Delivery') {
-        // Buscar deliveries relacionados y eliminar los de devolución
-
-        const deliveries = await Delivery.find({ idCliente: factura._id }).session(session);
-        for (const delivery of deliveries) {
-          if (delivery.descripcion.includes('Devolucion') && delivery.fecha === factura.dateEntrega.fecha) {
-            idDeliveryDeleted = delivery._id;
-            await Delivery.findOneAndDelete({ _id: delivery._id }, { session: session });
-          }
-        }
-      }
-
+    const fechaActual = moment().format("YYYY-MM-DD");
+    if (
+      factura.estadoPrenda === "entregado" &&
+      factura.dateEntrega.fecha === fechaActual
+    ) {
       // Actualizar cliente si tiene DNI
-      if (factura.dni !== '') {
-        const cliente = await clientes.findOne({ dni: factura.dni }).session(session);
+      if (factura.dni !== "") {
+        const cliente = await clientes
+          .findOne({ dni: factura.dni })
+          .session(session);
         if (cliente) {
           // Actualizar cliente y sus infoScore
           const facturaIdString = factura._id.toString();
 
-          const updatedInfoScore = cliente.infoScore.filter((score) => score.idOrdenService !== facturaIdString);
+          const updatedInfoScore = cliente.infoScore.filter(
+            (score) => score.idOrdenService !== facturaIdString
+          );
 
           // Actualizar el scoreTotal del cliente
           cliente.infoScore = updatedInfoScore;
-          cliente.scoreTotal = cliente.infoScore.reduce((total, score) => total + parseInt(score.score), 0);
+          cliente.scoreTotal = cliente.infoScore.reduce(
+            (total, score) => total + parseInt(score.score),
+            0
+          );
 
           await cliente.save({ session: session });
         }
       }
-      const orderUpdate = await Factura.findOneAndUpdate(
+
+      let orderUpdate = await Factura.findOneAndUpdate(
         { _id: facturaId },
         {
-          estadoPrenda: 'pendiente',
+          estadoPrenda: "pendiente",
           dateEntrega: {
-            fecha: '',
-            hora: '',
+            fecha: "",
+            hora: "",
           },
         },
         { new: true, session: session }
       );
 
-      res.json({
-        orderUpdate: orderUpdate.toObject(),
-        ...(idDeliveryDeleted && factura.Modalidad === 'Delivery' && { idDeliveryDeleted: idDeliveryDeleted }),
-      });
       await session.commitTransaction();
+
+      orderUpdate = orderUpdate.toObject();
+      const infoPagos = await GetPagosIdOrden(orderUpdate._id.toString());
+
+      res.json({
+        ...orderUpdate,
+        ListPago: infoPagos,
+        donationDate: {
+          fecha: "",
+          hora: "",
+        },
+      });
     } else {
-      res.status(404).json({ mensaje: 'No cumple con los parametros para cancelar entrega' });
+      res.status(404).json({
+        mensaje: "No cumple con los parametros para cancelar entrega",
+      });
     }
   } catch (error) {
     await session.abortTransaction();
     console.error(error);
-    res.status(500).json({ mensaje: 'Error al cancelar Entrega' });
+    res.status(500).json({ mensaje: "Error al cancelar Entrega" });
   }
 });
 

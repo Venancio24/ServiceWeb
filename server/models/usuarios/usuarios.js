@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const usuarioSchema = new mongoose.Schema(
   {
@@ -8,11 +8,11 @@ const usuarioSchema = new mongoose.Schema(
     name: String,
     email: String,
     phone: String,
-    _validate: Boolean,
+    state: String,
   },
-  { collection: 'Usuarios' }
+  { collection: "Usuarios" }
 );
 
-const Usuarios = mongoose.model('Usuarios', usuarioSchema);
+const Usuarios = mongoose.model("Usuarios", usuarioSchema);
 
 export default Usuarios;
