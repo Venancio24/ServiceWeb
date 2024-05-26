@@ -4,7 +4,7 @@ import PasswordResetCodes from "../models/usuarios/passwordResetCodes.js";
 import Negocio from "../models/negocio.js";
 import jwt from "jsonwebtoken";
 import moment from "moment";
-import { secretKey, timeZone } from "../utils/varsGlobal.js";
+import { secretKey } from "../utils/varsGlobal.js";
 
 // Middleware para verificar el token y la existencia en la colección Accesos
 export const verifyToken = async (req, res, next) => {
