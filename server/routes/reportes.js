@@ -3,6 +3,8 @@ import Factura from "../models/Factura.js";
 import moment from "moment";
 import "moment-timezone";
 import Pagos from "../models/pagos.js";
+import { mapArrayByKey, mapObjectByKey } from "../utils/utilsFuncion.js";
+import Usuario from "../models/usuarios/usuarios.js";
 
 const router = express.Router();
 
@@ -21,38 +23,34 @@ router.get("/get-reporte-mensual", async (req, res) => {
     const fechaInicial = moment(`${anio}-${mes}-01`, "YYYY-MM");
     const fechaFinal = fechaInicial.clone().endOf("month");
 
+    // Consultar las órdenes dentro del rango de fechas y estadoPrenda distinto de "anulado"
     const ordenes = await Factura.find({
       "dateRecepcion.fecha": {
         $gte: fechaInicial.format("YYYY-MM-DD"),
         $lte: fechaFinal.format("YYYY-MM-DD"),
       },
-      estadoPrenda: { $ne: "anulado" }, // EstadoPrenda debe ser distinto de "anulado"
+      estadoPrenda: { $ne: "anulado" },
     }).lean();
 
-    let ordenesMensual = [];
-    for (const orden of ordenes) {
-      const pagos = await Pagos.find({ _id: { $in: orden.listPago } });
+    // Obtener los IDs de todos los pagos de las órdenes
+    const idsPagos = ordenes.flatMap((orden) => orden.listPago);
 
-      // Utilizar map para transformar la lista de pagos en detallesPago
-      const ListPago = pagos.map((pago) => ({
-        _id: pago._id,
-        idUser: pago.idUser,
-        idOrden: pago.idOrden,
-        orden: orden.codRecibo,
-        date: pago.date,
-        nombre: orden.Nombre,
-        total: pago.total,
-        metodoPago: pago.metodoPago,
-        Modalidad: orden.Modalidad,
-      }));
+    // Consultar todos los pagos de las órdenes
+    const pagos = await Pagos.find({ _id: { $in: idsPagos } }).lean();
 
-      ordenesMensual.push({ ...orden, ListPago });
-    }
+    // Crear un mapa array de pagos por ID de orden para un acceso más rápido
+    const pagosPorOrden = mapArrayByKey(pagos, "idOrden");
+
+    // Combinar las órdenes con sus respectivos pagos
+    const ordenesMensual = ordenes.map((orden) => ({
+      ...orden,
+      ListPago: pagosPorOrden[orden._id] || [],
+    }));
 
     res.status(200).json(ordenesMensual);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ mensaje: "No se pudo Generar reporte EXCEL" });
+    res.status(500).json({ mensaje: "No se pudo generar el reporte EXCEL" });
   }
 });
 
@@ -64,36 +62,49 @@ router.get("/get-reporte-pendientes", async (req, res) => {
       location: 1,
     }).lean();
 
-    // Array para almacenar las promesas de obtener los pagos
-    const pagosPromises = facturas.map(async (factura) => {
-      if (factura.listPago.length > 0) {
-        // Buscar los pagos relacionados con la factura
-        const pagos = await Pagos.find({
-          _id: { $in: factura.listPago },
-        }).lean();
+    const listPagosIds = facturas.flatMap((factura) => factura.listPago);
 
-        // Transformar la lista de pagos en detallesPago
-        const ListPago = pagos.map((pago) => ({
-          _id: pago._id,
-          idUser: pago.idUser,
-          idOrden: pago.idOrden,
-          orden: factura.codRecibo,
-          date: pago.date,
-          nombre: factura.Nombre,
-          total: pago.total,
-          metodoPago: pago.metodoPago,
-          Modalidad: factura.Modalidad,
-        }));
+    const pagos = await Pagos.find({
+      _id: { $in: listPagosIds },
+    }).lean();
 
-        return { ...factura, ListPago };
-      } else {
-        return { ...factura, ListPago: [] };
+    // Crear un mapa para agrupar los pagos por idOrden
+    const pagosMap = mapArrayByKey(pagos, "idOrden");
+
+    // Obtener todos los idUser de los pagos sin repeticiones
+    const idUsers = [...new Set(pagos.map((pago) => pago.idUser))];
+
+    // Buscar la información de los usuarios relacionados con los idUsers
+    const usuarios = await Usuario.find(
+      { _id: { $in: idUsers } },
+      {
+        _id: 1,
+        name: 1,
+        usuario: 1,
+        rol: 1,
       }
+    ).lean();
+
+    // Crear un mapa de usuarios por su _id
+    const usuariosMap = mapObjectByKey(usuarios, "_id");
+
+    // Mapear las facturas con sus pagos correspondientes
+    const facturasPendientes = facturas.map((factura) => {
+      const ListPago = (pagosMap[factura._id] || []).map((pago) => ({
+        _id: pago._id,
+        idUser: pago.idUser,
+        idOrden: pago.idOrden,
+        orden: factura.codRecibo,
+        date: pago.date,
+        nombre: factura.Nombre,
+        total: pago.total,
+        metodoPago: pago.metodoPago,
+        Modalidad: factura.Modalidad,
+        isCounted: pago.isCounted,
+        infoUser: usuariosMap[pago.idUser],
+      }));
+      return { ...factura, ListPago };
     });
-
-    // Resolver todas las promesas de pagos
-    const facturasPendientes = await Promise.all(pagosPromises);
-
     res.json(facturasPendientes);
   } catch (error) {
     console.error(error);
