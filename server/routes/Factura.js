@@ -143,7 +143,7 @@ router.post("/add-factura", openingHours, async (req, res) => {
       dateRecepcion,
       Modalidad,
       Nombre,
-      idCliente: infoCliente ? infoCliente._id : idCliente,
+      idCliente: infoCliente ? infoCliente.data._id : idCliente,
       Items,
       celular,
       direccion,
