@@ -62,21 +62,63 @@ io.on("connection", (socket) => {
   console.log(`Un cliente se ha conectado : ${socket.id}`);
 
   // Maneja eventos cuando el cliente envía un mensaje
-  socket.on("client:newOrder", (info) => {
-    socket.broadcast.emit("server:newOrder", info);
+  socket.on("client:changeOrder", (info) => {
+    socket.broadcast.emit("server:changeOrder", info);
   });
 
   socket.on("client:updateCodigo", (info) => {
     io.emit("server:updateCodigo", info);
   });
 
+  // UPDATE INFO EN ORDEN DE SERVICIO
   socket.on("client:updateOrder", (info) => {
     const { orderUpdated } = info;
-
     socket.broadcast.emit("server:orderUpdated", orderUpdated);
-    socket.broadcast.emit("server:orderUpdated:child", orderUpdated);
   });
 
+  socket.on("client:updateOrder(ITEMS)", (info) => {
+    socket.broadcast.emit("server:updateOrder(ITEMS)", info);
+  });
+
+  socket.on("client:updateOrder(FINISH_RESERVA)", (info) => {
+    socket.broadcast.emit("server:updateOrder(FINISH_RESERVA)", info);
+  });
+
+  socket.on("client:updateOrder(ENTREGAR)", (info) => {
+    socket.broadcast.emit("server:updateOrder(ENTREGAR)", info);
+  });
+
+  socket.on("client:updateOrder(CANCELAR_ENTREGA)", (info) => {
+    socket.broadcast.emit("server:updateOrder(CANCELAR_ENTREGA)", info);
+  });
+
+  socket.on("client:updateOrder(ANULACION)", (info) => {
+    socket.broadcast.emit("server:updateOrder(ANULACION)", info);
+  });
+
+  socket.on("client:updateOrder(NOTA)", (info) => {
+    socket.broadcast.emit("server:updateOrder(NOTA)", info);
+  });
+  // ACCIONES EN REPORTE DE ORDEN (PENDIENTES Y ALMACENADOS):
+  socket.on("client:updateOrder(LOCATION)", (info) => {
+    socket.broadcast.emit("server:updateOrder(LOCATION)", info);
+  });
+  // REMOVER CUANDO SE ESTA ANULANDO O ENTREGANDO - DE REPORTE DE PENDIENTES Y ALMACEN
+  socket.on("client:onRemoveOrderReporteAE", (info) => {
+    socket.broadcast.emit("server:onRemoveOrderReporteAE", info);
+  });
+  // REMOVER CUANDO SE ESTA ALMACENANDO - DE REPORTE DE PENDIENTES
+  socket.on("client:onRemoveOrderReportP", (info) => {
+    socket.broadcast.emit("server:onRemoveOrderReportP", info);
+  });
+  // REMOVER CUANDO SE ESTA DONANDO - DE REPORTE DE ALMACENADO
+  socket.on("client:onRemoveOrderReporteD", (info) => {
+    socket.broadcast.emit("server:onRemoveOrderReporteD", info);
+  });
+  socket.on("client:onAddOrderAlmacen", (info) => {
+    socket.broadcast.emit("server:onAddOrderAlmacen", info);
+  });
+  // ---------------------------------------- //
   socket.on("client:updateListOrder", (info) => {
     socket.broadcast.emit("server:updateListOrder", info);
     socket.broadcast.emit("server:updateListOrder:child", info);
@@ -95,10 +137,6 @@ io.on("connection", (socket) => {
     socket.broadcast.emit("server:onLogin", info);
   });
 
-  socket.on("client:onFirtLogin", (info) => {
-    socket.broadcast.emit("server:onFirtLogin", info);
-  });
-
   socket.on("client:onNewUser", (info) => {
     socket.broadcast.emit("server:onNewUser", info);
   });
@@ -115,12 +153,10 @@ io.on("connection", (socket) => {
     socket.broadcast.emit("server:onDeleteUser", info);
   });
 
+  // PARA INFORMAR AL CLIENTE, QUE SU CUENTA HA SIDO ELIMINADA
+  // Y  LO SAQUE DEL SISTEMA
   socket.on("client:onDeleteAccount", (info) => {
     socket.broadcast.emit("server:onDeleteAccount", info);
-  });
-
-  socket.on("client:cPricePrendas", (info) => {
-    socket.broadcast.emit("server:cPricePrendas", info);
   });
 
   socket.on("client:cPromotions", (info) => {
@@ -145,11 +181,19 @@ io.on("connection", (socket) => {
   });
 
   socket.on("client:cPago", (info) => {
-    io.emit("server:cPago", info);
+    socket.broadcast.emit("server:cPago", info);
   });
 
   socket.on("client:cClientes", (info) => {
     io.emit("server:cClientes", info);
+  });
+
+  socket.on("client:cService", (info) => {
+    socket.broadcast.emit("server:cService", info);
+  });
+
+  socket.on("client:cCategoria", (info) => {
+    socket.broadcast.emit("server:cCategoria", info);
   });
 
   // Maneja el evento cuando un cliente se desconecta

@@ -1,9 +1,7 @@
 import Servicio from "../models/portafolio/servicios.js";
 import Categoria from "../models/categorias.js";
-import Factura from "../models/Factura.js";
 import Anular from "../models/anular.js";
-import Pagos from "../models/pagos.js";
-import { handleGetInfoUser } from "../routes/cuadreDiario.js";
+import { nameDelivery } from "./varsGlobal.js";
 
 // Función para agrupar objetos usando una clave de identificación
 export function mapObjectByKey(array, key) {
@@ -43,7 +41,7 @@ export const handleGetInfoDelivery = async () => {
     // Consulta a la colección Servicio
     const servicio = await Servicio.findOne({
       idCategoria: categoriaId,
-      nombre: "Delivery",
+      nombre: nameDelivery,
     });
 
     // Verifica si se encontró el servicio
@@ -73,37 +71,5 @@ export const GetAnuladoId = async (id) => {
   } catch (error) {
     console.error("Error al buscar el registro anulado:", error);
     throw error; // puedes manejar el error según tus necesidades
-  }
-};
-
-export const GetPagoMasDetalleOrden = async (idPago) => {
-  try {
-    const pagoInfo = await Pagos.findById(idPago);
-
-    // Seleccionar solo los campos necesarios de la factura
-    const factura = await Factura.findById(pagoInfo.idOrden).select(
-      "codRecibo Nombre Modalidad"
-    );
-
-    const infoUser = await handleGetInfoUser(pagoInfo.idUser);
-
-    const detallePago = {
-      _id: pagoInfo._id,
-      idUser: pagoInfo.idUser,
-      orden: factura.codRecibo,
-      idOrden: pagoInfo.idOrden,
-      date: pagoInfo.date,
-      nombre: factura.Nombre,
-      total: pagoInfo.total,
-      metodoPago: pagoInfo.metodoPago,
-      Modalidad: factura.Modalidad,
-      isCounted: pagoInfo.isCounted,
-      infoUser: infoUser,
-    };
-
-    return detallePago;
-  } catch (error) {
-    console.error("Error al obtener los datos por _id de pago:", error);
-    throw error; // Propagar el error para que sea manejado por el llamador
   }
 };

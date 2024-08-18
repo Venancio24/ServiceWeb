@@ -28,6 +28,8 @@ const NegocioSchema = new mongoose.Schema(
     ],
     oldOrder: Boolean,
     hasMobility: Boolean,
+    filterListDefault: String, // others , pendiente
+    maxConsultasDefault: Number,
   },
   { collection: "Negocio" }
 );

@@ -15,8 +15,14 @@ router.get("/get-personal", async (req, res) => {
 router.post("/registrar-personal", async (req, res) => {
   try {
     // Obtener los datos del cuerpo de la solicitud
-    const { name, horaIngreso, horaSalida, pagoByHour, dateNacimiento } =
-      req.body;
+    const {
+      name,
+      horaIngreso,
+      horaSalida,
+      pagoByHour,
+      dateNacimiento,
+      pagoMensual,
+    } = req.body;
 
     // Crear una instancia del modelo Asistencia con los datos recibidos
     const newPersonal = new Personal({
@@ -26,6 +32,7 @@ router.post("/registrar-personal", async (req, res) => {
       pagoByHour,
       dateNacimiento,
       birthDayUsed: [],
+      pagoMensual,
     });
 
     // Guardar la nueva asistencia en la base de datos
@@ -45,8 +52,14 @@ router.put("/actualizar-personal/:id", async (req, res) => {
     const idPersonal = req.params.id;
 
     // Obtener los datos actualizados del cuerpo de la solicitud
-    const { name, horaIngreso, horaSalida, pagoByHour, dateNacimiento } =
-      req.body;
+    const {
+      name,
+      horaIngreso,
+      horaSalida,
+      pagoByHour,
+      dateNacimiento,
+      pagoMensual,
+    } = req.body;
 
     // Buscar el personal por su ID y actualizarlo
     const personalActualizado = await Personal.findByIdAndUpdate(
@@ -57,6 +70,7 @@ router.put("/actualizar-personal/:id", async (req, res) => {
         horaSalida,
         pagoByHour,
         dateNacimiento,
+        pagoMensual,
       },
       { new: true } // Para devolver el personal actualizado después de la actualización
     );
